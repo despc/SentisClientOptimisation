@@ -35,6 +35,13 @@ class PackagingTests(unittest.TestCase):
         self.assertIn('-Runtime', text)
         self.assertNotIn("if not FileExists(GetEnv('APPDATA') + '\\\\Pulsar\\\\Legacy.exe')", text)
 
+    def test_unicode_shortcut_helper_is_shipped_and_extracted(self):
+        for file in ('tools/release.ps1', 'installer/SentisClientOptimisation.iss', 'package/install.ps1'):
+            text = (ROOT / file).read_text(encoding='utf-8-sig')
+            self.assertIn('shortcut.ps1', text)
+        text = (ROOT / 'installer/SentisClientOptimisation.iss').read_text(encoding='utf-8-sig')
+        self.assertIn("ExtractTemporaryFile('shortcut.ps1')", text)
+
     def test_multisize_icon(self):
         import struct
         data = (ROOT / 'package' / 'SentisClientOptimisation.ico').read_bytes()

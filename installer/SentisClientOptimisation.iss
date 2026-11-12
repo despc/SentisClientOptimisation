@@ -41,6 +41,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Source: "{#PayloadDir}\SentisClientOptimisation.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PayloadDir}\SentisClientOptimisation.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PayloadDir}\install.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#PayloadDir}\shortcut.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PayloadDir}\uninstall.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PayloadDir}\install-pulsar.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PayloadDir}\install-dotnet.ps1"; DestDir: "{app}"; Flags: ignoreversion
@@ -191,6 +192,7 @@ var
 begin
   Result := '';
   ExtractTemporaryFile('install.ps1');
+  ExtractTemporaryFile('shortcut.ps1');
   ExtractTemporaryFile('uninstall.ps1');
   ExtractTemporaryFile('install-pulsar.ps1');
   ExtractTemporaryFile('install-dotnet.ps1');

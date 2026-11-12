@@ -27,7 +27,8 @@ try {
     $profile = Join-Path $pulsar 'Profiles\Current.xml'
     # Все проверки до изменений. GUI Pulsar: Interface.exe (Interface.csproj).
     if (Get-Process -Name 'Legacy', 'Interim', 'SpaceEngineers', 'Pulsar', 'Interface' -ErrorAction SilentlyContinue) { throw 'Игра или Pulsar запущены. Закройте Legacy, Interim, SpaceEngineers и Pulsar (Interface).' }
-    foreach ($file in @($source, $iconSource)) {
+    $shortcutHelper = Join-Path $here 'shortcut.ps1'
+    foreach ($file in @($source, $iconSource, $shortcutHelper)) {
         if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "В установочном пакете отсутствует файл: $file" }
     }
     if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw "Не найден Pulsar ($exe). Установите Pulsar и запустите игру через него для создания профиля." }
@@ -47,7 +48,7 @@ try {
     [xml]$xml = Get-Content -LiteralPath $profile -Raw -Encoding UTF8
     if ($null -eq $xml.DocumentElement) { throw "Профиль Pulsar не содержит корневого XML-элемента: $profile" }
     if (-not (Test-Path -LiteralPath $Desktop -PathType Container)) { throw "Не найден рабочий стол: $Desktop" }
-    $shell = New-Object -ComObject WScript.Shell
+    . $shortcutHelper
     if ($ValidateOnly) { Write-Host 'Проверка установки выполнена. Изменений нет.'; exit 0 }
 
     # 1. плагин
@@ -123,14 +124,8 @@ try {
     $launchLines += ('start "" /D "%~dp0" "%~dp0' + $Runtime + '.exe"')
     Set-Content -LiteralPath $launcher -Encoding ASCII -Value $launchLines
     if (Test-Path -LiteralPath $oldLauncher) { Remove-Item -LiteralPath $oldLauncher }
-    $shell = New-Object -ComObject WScript.Shell
-    $link = $shell.CreateShortcut($shortcut)
-    $link.TargetPath = $launcher
-    $link.WorkingDirectory = $pulsarRoot
-    $link.IconLocation = "$icon,0"
-    $link.WindowStyle = 7
-    $link.Description = 'Space Engineers через Pulsar с SentisClientOptimisation'
-    $link.Save()
+    [Sentis.Installer.UnicodeShortcut]::Create($shortcut, $launcher, $pulsarRoot, $icon,
+        'Space Engineers через Pulsar с SentisClientOptimisation')
     Write-Host "4. Ярлык запуска: $shortcut"
     Write-Host ''
     Write-Host 'Готово. Запускайте игру ярлыком "Space Engineers (Pulsar)" на рабочем столе.'

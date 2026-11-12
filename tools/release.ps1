@@ -41,7 +41,7 @@ $stage = Join-Path $outPath $Plugin
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory -Force $stage | Out-Null
 # the scripts and the README that ship with the plugin (a dll lying in package\ is an earlier build, not this one)
-foreach ($file in 'install.ps1', 'uninstall.ps1', 'install-pulsar.ps1', 'install-dotnet.ps1', 'install-transaction.ps1', 'SentisClientOptimisation.ico', 'README.txt') {
+foreach ($file in 'install.ps1', 'uninstall.ps1', 'install-pulsar.ps1', 'install-dotnet.ps1', 'install-transaction.ps1', 'shortcut.ps1', 'SentisClientOptimisation.ico', 'README.txt') {
     Copy-Item (Join-Path $repo "package\$file") -Destination $stage
 }
 Copy-Item $dll -Destination $stage

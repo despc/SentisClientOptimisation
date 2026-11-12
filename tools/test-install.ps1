@@ -1,7 +1,7 @@
 ﻿# Integration tests: Windows PowerShell 5.1, isolated files and real shortcut COM.
 param([string]$PackagePath = (Join-Path (Split-Path $PSScriptRoot -Parent) 'package'))
 $ErrorActionPreference = 'Stop'
-$root = Join-Path $env:LOCALAPPDATA ('hermes\cache\scratch\sco-install-[тест]-' + [Guid]::NewGuid().ToString('N'))
+$root = Join-Path $env:LOCALAPPDATA ('hermes\cache\scratch\sco-install-[тест-日本語]-' + [Guid]::NewGuid().ToString('N'))
 $originalAppData = $env:APPDATA
 $originalPause = $env:SCO_NO_PAUSE
 $script:checks = 0
@@ -61,6 +61,7 @@ try {
         $bytes = [IO.File]::ReadAllBytes($scriptPath)
         Assert ($bytes.Length -ge 3 -and $bytes[0] -eq 239 -and $bytes[1] -eq 187 -and $bytes[2] -eq 191) ('UTF8 BOM: ' + $scriptPath)
     }
+    . (Join-Path $PackagePath 'shortcut.ps1')
     New-Fixture 'lifecycle'
     $initialHash = (Get-FileHash -LiteralPath $config -Algorithm SHA256).Hash
     $before = Snapshot $fixture
@@ -84,11 +85,12 @@ try {
     $launchText = Get-Content -LiteralPath $launcher -Raw
     Assert ($launchText.Contains('set COMPlus_GCgen0MaxBudget=2000000')) '32MB gen0 budget preserved'
     Assert ($launchText.Contains('start "" /D "%~dp0" "%~dp0Legacy.exe"')) 'launcher starts Legacy relative to itself (Unicode-safe)'
-    $shell = New-Object -ComObject WScript.Shell
-    $link = $shell.CreateShortcut((Join-Path $desktop 'Space Engineers (Pulsar).lnk'))
+    $link = [Sentis.Installer.UnicodeShortcut]::Read((Join-Path $desktop 'Space Engineers (Pulsar).lnk'))
     Assert ($link.TargetPath -eq $launcher) 'COM shortcut target'
     Assert ($link.WorkingDirectory -eq $pulsar) 'COM shortcut working directory'
     Assert ($link.IconLocation -eq ((Join-Path $pulsar 'SentisClientOptimisation.ico') + ',0')) 'COM shortcut icon'
+    Assert ($link.WindowStyle -eq 7) 'Unicode shortcut minimized window style'
+    Assert ($link.Description -eq 'Space Engineers через Pulsar с SentisClientOptimisation') 'Unicode shortcut description'
     Assert ((Get-FileHash -LiteralPath (Join-Path $pulsar 'Legacy\Local\SentisClientOptimisation.dll')).Hash -eq (Get-FileHash -LiteralPath $dll).Hash) 'real DLL copied intact'
     Assert ((Get-FileHash -LiteralPath (Join-Path $pulsar 'SentisClientOptimisation.ico')).Hash -eq (Get-FileHash -LiteralPath (Join-Path $PackagePath 'SentisClientOptimisation.ico')).Hash) 'real icon copied intact'
     $before = Snapshot $fixture
@@ -110,10 +112,11 @@ try {
     [xml]$xml = Get-Content -LiteralPath $profile -Raw
     Assert ($null -ne $xml.SelectSingleNode('/Profile/Local/string[text()="SentisClientOptimisation.dll"]')) 'missing Local created at profile root, not nested'
     Assert ($null -ne $xml.SelectSingleNode('/Profile/Nested/Local/string[text()="Nested.dll"]')) 'nested Local remains unchanged'
-    foreach ($case in @('dll','icon','exe','config','config-malformed','config-root','profile','profile-malformed','profile-root')) {
+    foreach ($case in @('dll','icon','helper','exe','config','config-malformed','config-root','profile','profile-malformed','profile-root')) {
         New-Fixture ('preflight-' + $case)
         switch ($case) {
             'dll' { Remove-Item -LiteralPath (Join-Path $package 'SentisClientOptimisation.dll') }
+            'helper' { Remove-Item -LiteralPath (Join-Path $package 'shortcut.ps1') }
             'icon' { Remove-Item -LiteralPath (Join-Path $package 'SentisClientOptimisation.ico') -ErrorAction SilentlyContinue }
             'exe' { Remove-Item -LiteralPath (Join-Path $pulsar 'Legacy.exe') }
             'config' { Remove-Item -LiteralPath $config }
@@ -210,8 +213,7 @@ try {
         Assert ($launchText.Contains('start "" /D "%~dp0" "%~dp0Interim.exe"')) 'Interim relative Unicode-safe launcher'
         Assert ($launchText.Contains('if exist "%LOCALAPPDATA%\SentisClientOptimisation\dotnet\dotnet.exe" set "DOTNET_ROOT_X64=%LOCALAPPDATA%\SentisClientOptimisation\dotnet"')) 'Interim conditional private runtime root'
         Assert (-not $launchText.Contains('Microsoft\dotnet')) 'launcher never uses unrelated Microsoft dotnet root'
-        $shell = New-Object -ComObject WScript.Shell
-        $link = $shell.CreateShortcut((Join-Path $desktop 'Space Engineers (Pulsar).lnk'))
+        $link = [Sentis.Installer.UnicodeShortcut]::Read((Join-Path $desktop 'Space Engineers (Pulsar).lnk'))
         Assert ($link.TargetPath -eq (Join-Path $pulsar 'SentisClientOptimisation-launch.cmd')) 'Interim real COM shortcut target'
         Assert ($link.WorkingDirectory -eq $pulsar) 'Interim real COM working directory'
         Assert ($link.IconLocation -eq ((Join-Path $pulsar 'SentisClientOptimisation.ico') + ',0')) 'Interim real COM icon'
