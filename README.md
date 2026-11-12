@@ -34,7 +34,14 @@ Space Engineers, найденные по трейсам клиентов. Раб
 при старте: `SentisClientOptimisation: VoxelCacheSave on`, `SentisClientOptimisation: BulkChildDelete on`.
 
 Сборка ссылается на клиент игры (`SeBin`, по умолчанию `C:\Program Files (x86)\Steam\steamapps\common\SpaceEngineers\Bin64`)
-и на Harmony из Pulsar (`PulsarLib`, по умолчанию `%APPDATA%\Pulsar\Libraries\Legacy`).
+и на Harmony из Pulsar (`PulsarLib`, по умолчанию `%APPDATA%\Pulsar\Libraries\Legacy`; где Pulsar нет — на тот же
+`Lib.Harmony` из NuGet, в рантайме плагин связывается с Harmony, который Pulsar уже загрузил).
+
+`tools\release.ps1 -Version 0.2.1` собирает и-packует архив (`dist\SentisClientOptimisation-0.2.1.zip`: dll, скрипты
+установки, README с версией). Тег `0.2.1` (или `v0.2.1`), поставленный и отправленный на GitHub, запускает workflow,
+который повторяет это против библиотек игры, скачанных SteamCMD (бесплатный выделенный сервер, кэш на неделю — в
+репозитории их нет, и не наш право их раздавать), и кладёт архив в релиз; «Run workflow» собирает тот же архив без
+релиза.
 
 ## Сборка мусора клиента (отдельно от плагина)
 
