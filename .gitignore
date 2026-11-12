@@ -1,0 +1,8 @@
+bin/
+obj/
+*.user
+.idea/
+.vs/
+dist/
+.se/
+package/SentisClientOptimisation.dll

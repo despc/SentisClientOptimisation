@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <AssemblyName>SentisClientOptimisation</AssemblyName>
+    <RootNamespace>SentisClientOptimisation</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PlatformTarget>x64</PlatformTarget>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <AssemblyVersion>0.2.1.0</AssemblyVersion>
+    <FileVersion>0.2.1.0</FileVersion>
+    <Deterministic>true</Deterministic>
+    <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
+    <NoWarn>CS0168;CS0219;CS0414;CS0649;CS1591;NU1701;NU5104</NoWarn>
+    <!-- the game client (a Pulsar plugin runs in it, not on the server) -->
+    <SeBin Condition="'$(SeBin)' == ''">C:\Program Files (x86)\Steam\steamapps\common\SpaceEngineers\Bin64</SeBin>
+    <!-- Harmony comes with Pulsar; where Pulsar is not installed (the release build on GitHub) it comes from NuGet,
+         same assembly, and at runtime the plugin binds to the 0Harmony Pulsar has already loaded -->
+    <PulsarLib Condition="'$(PulsarLib)' == ''">$(APPDATA)\Pulsar\Libraries\Legacy</PulsarLib>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SentisClientOptimisation.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <PackageReference Include="Lib.Harmony" Version="2.4.2" Condition="!Exists('$(PulsarLib)\0Harmony.dll')" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="Sandbox.Common"><HintPath>$(SeBin)\Sandbox.Common.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="Sandbox.Game"><HintPath>$(SeBin)\Sandbox.Game.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="SpaceEngineers.Game"><HintPath>$(SeBin)\SpaceEngineers.Game.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="VRage"><HintPath>$(SeBin)\VRage.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="VRage.Game"><HintPath>$(SeBin)\VRage.Game.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="VRage.Library"><HintPath>$(SeBin)\VRage.Library.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="VRage.Math"><HintPath>$(SeBin)\VRage.Math.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="0Harmony" Condition="Exists('$(PulsarLib)\0Harmony.dll')"><HintPath>$(PulsarLib)\0Harmony.dll</HintPath><Private>False</Private></Reference>
+  </ItemGroup>
+
+</Project>
