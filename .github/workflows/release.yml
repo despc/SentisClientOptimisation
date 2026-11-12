@@ -36,7 +36,7 @@ jobs:
 
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: 10.0.x
 
       - name: Week of the year (the game's libraries are fetched anew once a week)
         id: week
@@ -89,11 +89,19 @@ jobs:
         shell: pwsh
         run: ./tools/release.ps1 -Version "${{ github.event_name == 'push' && github.ref_name || inputs.version }}" -SeBin "$env:SE_ROOT\DedicatedServer64" -Plugin "$env:PLUGIN"
 
+      - name: Verify CLR and CoreCLR payload metadata
+        shell: pwsh
+        run: |
+          dotnet run --project tools/RuntimeAdmission/RuntimeAdmission.csproj -c Release -- "dist/$env:PLUGIN/$env:PLUGIN.dll" "dist/$env:PLUGIN/SentisClientOptimisation.Interim.dll"
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime admission metadata checks failed' }
+
       - name: Verify staged installation scripts
         shell: powershell
         run: |
           python tools/test-packaging.py
           if ($LASTEXITCODE -ne 0) { throw 'Packaging checks failed' }
+          ./tools/test-progress.ps1 -HelpersOnly
+          if ($LASTEXITCODE -ne 0) { throw 'Progress protocol checks failed' }
           ./tools/test-install.ps1 -PackagePath "$env:GITHUB_WORKSPACE/dist/$env:PLUGIN"
           if ($LASTEXITCODE -ne 0) { throw 'Installation lifecycle checks failed' }
 

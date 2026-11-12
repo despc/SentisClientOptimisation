@@ -1,8 +1,28 @@
 ﻿#requires -Version 5.1
 [CmdletBinding()]
-param([switch]$CheckOnly)
+param([switch]$CheckOnly, [switch]$ReportProgress)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2
+function Report-InstallProgress {
+    param(
+        [ValidateSet('metadata-pulsar', 'download-pulsar', 'verify-pulsar', 'extract-pulsar', 'copy-pulsar', 'detect-dotnet', 'metadata-dotnet', 'download-runtime', 'verify-runtime', 'extract-runtime', 'download-windowsdesktop', 'verify-windowsdesktop', 'extract-windowsdesktop', 'done')]
+        [string]$Phase,
+        [long]$Current = 0,
+        [long]$Total = 0,
+        [switch]$Force
+    )
+    # Helpers are also imported alone by security tests, with StrictMode enabled.
+    $enabled = Get-Variable -Name ReportProgress -ErrorAction SilentlyContinue
+    if (-not $enabled -or -not $enabled.Value) { return }
+    $state = Get-Variable -Name InstallProgressState -Scope Script -ErrorAction SilentlyContinue
+    $now = [Diagnostics.Stopwatch]::GetTimestamp()
+    if (-not $Force -and $state -and $state.Value.Phase -ceq $Phase -and
+        (($now - $state.Value.Tick) / [double][Diagnostics.Stopwatch]::Frequency) -lt 0.2) { return }
+    $culture = [Globalization.CultureInfo]::InvariantCulture
+    [Console]::Out.WriteLine('SCO_PROGRESS|' + $Phase + '|' + $Current.ToString($culture) + '|' + $Total.ToString($culture))
+    [Console]::Out.Flush()
+    $script:InstallProgressState = [pscustomobject]@{ Phase = $Phase; Tick = $now }
+}
 function Test-MicrosoftBinary([string]$Path) {
     if (-not [IO.File]::Exists($Path)) { return $false }
     $signature = Get-AuthenticodeSignature -LiteralPath $Path
@@ -45,7 +65,8 @@ function Assert-Package($File, [string]$Version, [string]$Kind) {
     $expected = "https://builds.dotnet.microsoft.com/dotnet/$folder/$Version/$prefix-$Version-win-x64.zip"
     if ($File.url -cne $expected) { throw 'Package URL does not match runtime version.' }
 }
-function Receive-OfficialFile([string]$Url, [string]$Path) {
+function Receive-OfficialFile([string]$Url, [string]$Path, [string]$Phase = 'metadata-dotnet') {
+    Report-InstallProgress $Phase 0 0 -Force
     Assert-OfficialUrl $Url
     $request = [Net.HttpWebRequest]::Create($Url)
     $request.AllowAutoRedirect = $false
@@ -54,9 +75,20 @@ function Receive-OfficialFile([string]$Url, [string]$Path) {
     try {
         $response = $request.GetResponse()
         if ([int]$response.StatusCode -ne 200) { throw "Unexpected HTTP status: $($response.StatusCode)" }
+        $downloadTotal = [long]0
+        if ($response.ContentLength -ge 0) { $downloadTotal = $response.ContentLength }
+        Report-InstallProgress $Phase 0 $downloadTotal -Force
         $inputStream = $response.GetResponseStream()
         $outputStream = [IO.File]::Open($Path, [IO.FileMode]::CreateNew)
-        $inputStream.CopyTo($outputStream)
+        $buffer = New-Object byte[] 65536
+        $received = [long]0
+        while (($read = $inputStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            $outputStream.Write($buffer, 0, $read)
+            $received += $read
+            Report-InstallProgress $Phase $received $downloadTotal
+        }
+        if ($response.ContentLength -ge 0 -and $received -ne $response.ContentLength) { throw 'Truncated HTTP download.' }
+        Report-InstallProgress $Phase $received $downloadTotal -Force
     } finally {
         if ($outputStream) { $outputStream.Dispose() }
         if ($inputStream) { $inputStream.Dispose() }
@@ -73,12 +105,15 @@ function Assert-NoReparse([string]$Path) {
         $current = [IO.Path]::GetDirectoryName($current)
     }
 }
-function Expand-SafeArchive([string]$ZipPath, [string]$Destination) {
+function Expand-SafeArchive([string]$ZipPath, [string]$Destination, [string]$Phase = 'extract-runtime') {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $base = [IO.Path]::GetFullPath($Destination).TrimEnd('\') + '\'
     Assert-NoReparse $Destination
     $zip = [IO.Compression.ZipFile]::OpenRead($ZipPath)
     try {
+        $extracted = [long]0
+        $entryCount = [long]$zip.Entries.Count
+        Report-InstallProgress $Phase 0 $entryCount -Force
         foreach ($entry in $zip.Entries) {
             $name = $entry.FullName.Replace('/', '\')
             if (-not $name -or [IO.Path]::IsPathRooted($name)) { throw 'Unsafe archive path.' }
@@ -92,32 +127,43 @@ function Expand-SafeArchive([string]$ZipPath, [string]$Destination) {
             $path = [IO.Path]::GetFullPath((Join-Path $Destination $name))
             if (-not $path.StartsWith($base, [StringComparison]::OrdinalIgnoreCase)) { throw 'Archive path escaped staging.' }
             Assert-NoReparse $path
-            if ($name.EndsWith('\')) { [void][IO.Directory]::CreateDirectory($path); continue }
+            if ($name.EndsWith('\')) {
+                [void][IO.Directory]::CreateDirectory($path)
+                $extracted++
+                Report-InstallProgress $Phase $extracted $entryCount
+                continue
+            }
             [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($path))
             # Both official archives can include identical top-level license files.
             if ([IO.File]::Exists($path)) {
                 $stream = $entry.Open(); $sha = [Security.Cryptography.SHA512]::Create()
                 try { $hash = [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '') } finally { $sha.Dispose(); $stream.Dispose() }
                 if ($hash -ne (Get-FileHash -LiteralPath $path -Algorithm SHA512).Hash) { throw "Conflicting archive file: $name" }
+                $extracted++
+                Report-InstallProgress $Phase $extracted $entryCount
                 continue
             }
             $source = $entry.Open(); $output = $null
             try { $output = [IO.File]::Open($path, [IO.FileMode]::CreateNew); $source.CopyTo($output) }
             finally { if ($output) { $output.Dispose() }; $source.Dispose() }
+            $extracted++
+            Report-InstallProgress $Phase $extracted $entryCount
         }
+        Report-InstallProgress $Phase $extracted $entryCount -Force
     } finally { $zip.Dispose() }
 }
 $work = $null
 $published = $false
 $createdDirectories = New-Object 'Collections.Generic.List[string]'
 try {
+    Report-InstallProgress 'detect-dotnet' 0 0 -Force
     if (-not $env:LOCALAPPDATA) { throw 'LOCALAPPDATA is missing.' }
     $target = Join-Path $env:LOCALAPPDATA 'SentisClientOptimisation\dotnet'
     $roots = @($target, $env:DOTNET_ROOT_X64, $env:DOTNET_ROOT)
     if ($env:ProgramW6432) { $roots += Join-Path $env:ProgramW6432 'dotnet' }
     if ($env:ProgramFiles) { $roots += Join-Path $env:ProgramFiles 'dotnet' }
     foreach ($root in @($roots | Where-Object { $_ } | Select-Object -Unique)) {
-        if (Test-Runtime $root) { Write-Output "Usable .NET 10 core and desktop: $root"; exit 0 }
+        if (Test-Runtime $root) { Write-Output "Usable .NET 10 core and desktop: $root"; Report-InstallProgress 'done' 0 0 -Force; exit 0 }
     }
     if ($CheckOnly) { exit 2 }
     # Never merge into or overwrite a pre-existing, unusable installation.
@@ -157,10 +203,11 @@ try {
         Assert-Package $file $component.version $kind
         $archivePath = Join-Path $work $packageName
         Write-Output "Downloading $kind $($component.version) (win-x64)."
-        Receive-OfficialFile $file.url $archivePath
+        Receive-OfficialFile $file.url $archivePath -Phase ('download-' + $kind)
+        Report-InstallProgress ('verify-' + $kind) 0 0 -Force
         if ((Get-FileHash -LiteralPath $archivePath -Algorithm SHA512).Hash -ine $file.hash) { throw "SHA512 mismatch: $packageName" }
         Write-Output "SHA512 verified: $packageName"
-        Expand-SafeArchive $archivePath $stage
+        Expand-SafeArchive $archivePath $stage -Phase ('extract-' + $kind)
     }
     if (-not (Test-Runtime $stage)) { throw 'Staged .NET 10 core + desktop verification failed.' }
     Assert-NoReparse $target
@@ -168,6 +215,7 @@ try {
     $published = $true
     if (-not (Test-Runtime $target)) { throw 'Published runtime verification failed.' }
     Write-Output "Installed private .NET 10 core and desktop: $target"
+    Report-InstallProgress 'done' 0 0 -Force
 } catch {
     if ($published) {
         # Only this invocation's atomically published tree is eligible for rollback.

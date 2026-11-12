@@ -9,8 +9,12 @@
   #define OutputPath "..\dist"
 #endif
 
+#ifndef AppGuid
+  #define AppGuid "58234B10-6052-47CC-A295-6B04B8389684"
+#endif
+
 [Setup]
-AppId={{58234B10-6052-47CC-A295-6B04B8389684}
+AppId={{{#AppGuid}}
 AppName=SentisClientOptimisation
 AppVersion={#AppVersion}
 AppPublisher=Sentis Project
@@ -39,6 +43,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
 Source: "{#PayloadDir}\SentisClientOptimisation.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#PayloadDir}\SentisClientOptimisation.Interim.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PayloadDir}\SentisClientOptimisation.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PayloadDir}\install.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PayloadDir}\shortcut.ps1"; DestDir: "{app}"; Flags: ignoreversion
@@ -57,6 +62,11 @@ var
   TransactionStarted, Completed, CleanPrevious: Boolean;
   SavedRuntime: String;
   TransactionAction: String;
+  DependencyPage: TOutputProgressWizardPage;
+  DependencyPageVisible, DependencyOutputError: Boolean;
+  DependencyMessages: String;
+
+#include "Progress.iss"
 
 function SelectedRuntime(): String;
 begin
@@ -86,6 +96,7 @@ end;
 
 procedure InitializeWizard;
 begin
+  DependencyPage := CreateOutputProgressPage('Подготовка компонентов', 'Загрузка и установка необходимых файлов');
   RuntimePage := CreateInputOptionPage(wpWelcome, 'Запуск Space Engineers 1',
     'Выберите вариант Pulsar',
     'Legacy — .NET Framework 4.8. Interim — .NET 10 через слой совместимости.' + #13#10 +
@@ -131,6 +142,7 @@ function RunScript(Path: String; ValidateOnly: Boolean; var Failure: String): Bo
 var
   Params, Command: String;
   Code, I: Integer;
+  StreamProgress: Boolean;
   Output: TExecOutput;
 begin
   Failure := '';
@@ -143,10 +155,38 @@ begin
   if ExtractFileName(Path) = 'install-transaction.ps1' then
     Command := Command + ' -Action ' + TransactionAction + ' -StatePath ' +
       PSQuote(ExpandConstant('{tmp}\sco-transaction')) + ' -Desktop ' + PSQuote(DesktopPath());
+  StreamProgress := (ExtractFileName(Path) = 'install-pulsar.ps1') or
+    (ExtractFileName(Path) = 'install-dotnet.ps1');
+  if StreamProgress then Command := Command + ' -ReportProgress';
   if ValidateOnly then Command := Command + ' -ValidateOnly';
   Command := Command + '; exit $LASTEXITCODE';
   Params := '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "' + Command + '"';
   try
+    if StreamProgress then begin
+      DependencyMessages := '';
+      DependencyOutputError := False;
+      DependencyPageVisible := not WizardSilent;
+      try
+        if DependencyPageVisible then begin
+          DependencyPage.SetText('Подготовка загрузки...', '');
+          DependencyPage.SetProgress(0, 1000);
+          DependencyPage.ProgressBar.Style := npbstMarquee;
+          DependencyPage.Show;
+        end;
+        Result := ExecAndLogOutput(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+          Params, ExtractFileDir(Path), SW_HIDE, ewWaitUntilTerminated, Code, @DependencyOutput);
+        if not Result then Failure := SysErrorMessage(Code)
+        else if (Code <> 0) or DependencyOutputError then begin
+          Result := False;
+          Failure := Trim(DependencyMessages);
+          if Failure = '' then Failure := 'PowerShell exit code: ' + IntToStr(Code);
+        end;
+      finally
+        if DependencyPageVisible then DependencyPage.Hide;
+        DependencyPageVisible := False;
+      end;
+      Exit;
+    end;
     Result := ExecAndCaptureOutput(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
       Params, ExtractFileDir(Path), SW_HIDE, ewWaitUntilTerminated, Code, Output);
     if not Result then begin
@@ -198,6 +238,7 @@ begin
   ExtractTemporaryFile('install-dotnet.ps1');
   ExtractTemporaryFile('install-transaction.ps1');
   ExtractTemporaryFile('SentisClientOptimisation.dll');
+  ExtractTemporaryFile('SentisClientOptimisation.Interim.dll');
   ExtractTemporaryFile('SentisClientOptimisation.ico');
   if not FileExists(GetEnv('APPDATA') + '\Pulsar\' + SelectedRuntime() + '.exe') then begin
     Consent := False;

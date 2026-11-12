@@ -10,6 +10,10 @@
 Установка (игра закрыта):
 1. Запустите SentisClientOptimisation-<версия>-Setup.exe.
 2. Выберите Legacy (.NET Framework 4.8) или Interim (.NET 10). Установленные варианты будут отмечены.
+   Пакет содержит отдельные сборки: SentisClientOptimisation.dll для Legacy и
+   SentisClientOptimisation.Interim.dll для Interim. В Local выбранная сборка всегда
+   устанавливается под именем SentisClientOptimisation.dll. Отсутствие сборки Interim —
+   ошибка проверки пакета, а не повод использовать сборку Legacy.
    Если выбранного варианта нет, согласитесь на скачивание Pulsar с официального GitHub.
    Для Interim при необходимости загрузится .NET 10 Desktop Runtime с сайта Microsoft. Установщик:
    - кладёт плагин в каталог Local выбранного режима Pulsar и снимает с него отметку "скачано из интернета";

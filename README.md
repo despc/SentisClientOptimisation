@@ -35,7 +35,11 @@ Modern относится к SE2. Если выбранный вариант о�
 с официального GitHub. Для Interim при необходимости устанавливается .NET 10 Desktop Runtime
 в `%LOCALAPPDATA%\SentisClientOptimisation\dotnet` без прав администратора.
 Предварительный запуск игры не требуется.
-Установщик кладёт DLL в каталог Local выбранного режима (у Interim возможен штатный fallback на Legacy),
+Пакет содержит отдельные DLL: корневую `SentisClientOptimisation.dll` (.NET Framework 4.8, Legacy)
+и `SentisClientOptimisation.Interim.dll` (.NET 10, Interim). Установщик выбирает сборку строго по режиму;
+если сборки Interim нет, проверка завершается ошибкой без подстановки DLL Legacy.
+В каталог Local выбранного режима она копируется как `SentisClientOptimisation.dll`
+(у Interim возможен штатный fallback **каталога данных** на Legacy, но не сборки),
 включает плагин в текущем профиле,
 настраивает серверный GC и создаёт ярлык «Space Engineers (Pulsar)» с иконкой Sentis.
 Запускайте игру этим ярлыком. Права администратора не нужны.
@@ -50,8 +54,9 @@ Modern относится к SE2. Если выбранный вариант о�
 `Lib.Harmony` из NuGet, в рантайме плагин связывается с Harmony, который Pulsar уже загрузил).
 
 `powershell -NoProfile -ExecutionPolicy Bypass -File tools/release.ps1 -Version 0.2.1`
-собирает `dist\SentisClientOptimisation-0.2.1-Setup.exe`. Нужны .NET SDK и Inno Setup 6.5+;
-путь к компилятору можно передать через `-Iscc` или `INNO_COMPILER`.
+собирает `dist\SentisClientOptimisation-0.2.1-Setup.exe`. Нужны .NET SDK 10 и Inno Setup 6.5+;
+сборки `net48` и `net10.0` создаются в отдельных каталогах и попадают в один пакет.
+Путь к компилятору можно передать через `-Iscc` или `INNO_COMPILER`.
 Тег `0.2.1` (или `v0.2.1`) запускает workflow сборки и публикации EXE;
 «Run workflow» собирает EXE без релиза. Библиотеки игры workflow получает через SteamCMD и не включает в установщик.
 

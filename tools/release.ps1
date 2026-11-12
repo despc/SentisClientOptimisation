@@ -30,12 +30,15 @@ foreach ($needed in 'Sandbox.Game', 'SpaceEngineers.Game', 'VRage.Library') {
     if (-not (Test-Path "$SeBin\$needed.dll")) { throw "Not found: $SeBin\$needed.dll (SeBin is '$SeBin')" }
 }
 
-$bin = Join-Path $outPath "build\$Plugin"
-if (Test-Path $bin) { Remove-Item $bin -Recurse -Force }
-dotnet build (Join-Path $repo "$Plugin\$Plugin.csproj") -c Release "-p:SeBin=$SeBin" "-p:Version=$number" "-p:AssemblyVersion=$number.0" "-p:FileVersion=$number.0" "-p:OutputPath=$bin" --nologo -v minimal
-if ($LASTEXITCODE -ne 0) { throw "The build failed ($LASTEXITCODE)" }
-$dll = Join-Path $bin "$Plugin.dll"
-if (-not (Test-Path $dll)) { throw "$Plugin.dll is not in the build" }
+$payloads = @{}
+foreach ($framework in @('net48', 'net10.0')) {
+    $bin = Join-Path $outPath "build\$Plugin\$framework"
+    if (Test-Path $bin) { Remove-Item $bin -Recurse -Force }
+    dotnet build (Join-Path $repo "$Plugin\$Plugin.csproj") -c Release -f $framework "-p:TargetFramework=$framework" -p:AppendTargetFrameworkToOutputPath=false "-p:SeBin=$SeBin" "-p:Version=$number" "-p:AssemblyVersion=$number.0" "-p:FileVersion=$number.0" "-p:OutputPath=$bin" --nologo -v minimal
+    if ($LASTEXITCODE -ne 0) { throw "The $framework build failed ($LASTEXITCODE)" }
+    $payloads[$framework] = Join-Path $bin "$Plugin.dll"
+    if (-not (Test-Path -LiteralPath $payloads[$framework] -PathType Leaf)) { throw "$Plugin.dll is not in the $framework build" }
+}
 
 $stage = Join-Path $outPath $Plugin
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
@@ -44,7 +47,10 @@ New-Item -ItemType Directory -Force $stage | Out-Null
 foreach ($file in 'install.ps1', 'uninstall.ps1', 'install-pulsar.ps1', 'install-dotnet.ps1', 'install-transaction.ps1', 'shortcut.ps1', 'SentisClientOptimisation.ico', 'README.txt') {
     Copy-Item (Join-Path $repo "package\$file") -Destination $stage
 }
-Copy-Item $dll -Destination $stage
+# Keep the root DLL compatible with older Legacy/manual consumers. The unique
+# Interim filename also makes Inno temporary extraction unambiguous.
+Copy-Item -LiteralPath $payloads['net48'] -Destination (Join-Path $stage 'SentisClientOptimisation.dll')
+Copy-Item -LiteralPath $payloads['net10.0'] -Destination (Join-Path $stage 'SentisClientOptimisation.Interim.dll')
 # the version of this release on the first line of the README (the file is UTF-8 without a byte order mark)
 $readmePath = Join-Path $stage 'README.txt'
 $utf8 = New-Object Text.UTF8Encoding $false

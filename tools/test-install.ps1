@@ -1,5 +1,5 @@
 ﻿# Integration tests: Windows PowerShell 5.1, isolated files and real shortcut COM.
-param([string]$PackagePath = (Join-Path (Split-Path $PSScriptRoot -Parent) 'package'))
+param([string]$PackagePath = (Join-Path (Split-Path $PSScriptRoot -Parent) 'dist\SentisClientOptimisation'))
 $ErrorActionPreference = 'Stop'
 $root = Join-Path $env:LOCALAPPDATA ('hermes\cache\scratch\sco-install-[тест-日本語]-' + [Guid]::NewGuid().ToString('N'))
 $originalAppData = $env:APPDATA
@@ -38,6 +38,7 @@ function New-Fixture([string]$id, [bool]$withLocal = $true) {
     foreach ($directory in @($package, $desktop, (Split-Path $profile -Parent))) { [void][IO.Directory]::CreateDirectory($directory) }
     foreach ($scriptFile in @(Get-ChildItem -LiteralPath $PackagePath -Filter '*.ps1')) { Copy-Item -LiteralPath $scriptFile.FullName -Destination $package }
     Copy-Item -LiteralPath $script:dll (Join-Path $package 'SentisClientOptimisation.dll')
+    Copy-Item -LiteralPath $script:interimDll (Join-Path $package 'SentisClientOptimisation.Interim.dll')
     if (Test-Path -LiteralPath (Join-Path $PackagePath 'SentisClientOptimisation.ico')) { Copy-Item -LiteralPath (Join-Path $PackagePath 'SentisClientOptimisation.ico') $package }
     Set-Content -LiteralPath (Join-Path $pulsar 'Legacy.exe') 'not launched by tests' -Encoding ASCII
     Set-Content -LiteralPath $config '<configuration><startup useLegacyV2RuntimeActivationPolicy="true"/><runtime><gcServer enabled="false"/><unrelated value="keep"/></runtime></configuration>' -Encoding UTF8
@@ -49,12 +50,13 @@ try {
     $PackagePath = (Resolve-Path -LiteralPath $PackagePath).Path
     $script:dll = Join-Path $PackagePath 'SentisClientOptimisation.dll'
     if (-not (Test-Path -LiteralPath $dll -PathType Leaf)) {
-        $repo = Split-Path $PSScriptRoot -Parent
-        $candidate = Get-ChildItem -LiteralPath (Join-Path $repo 'SentisClientOptimisation\bin\Release') -Filter 'SentisClientOptimisation.dll' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-        if (-not $candidate) { throw 'Build Release or supply a package containing SentisClientOptimisation.dll.' }
-        $script:dll = $candidate.FullName
+        throw 'Run tools/release.ps1 or supply a staged dual-runtime package containing SentisClientOptimisation.dll.'
     }
     Assert ([Reflection.AssemblyName]::GetAssemblyName($dll).Name -eq 'SentisClientOptimisation') 'test DLL is the real managed plugin assembly'
+    $script:interimDll = Join-Path $PackagePath 'SentisClientOptimisation.Interim.dll'
+    if (-not (Test-Path -LiteralPath $interimDll -PathType Leaf)) { throw 'Supply a staged dual-runtime package containing SentisClientOptimisation.Interim.dll.' }
+    Assert ([Reflection.AssemblyName]::GetAssemblyName($interimDll).Name -eq 'SentisClientOptimisation') 'Interim test DLL is the real managed plugin assembly'
+    Assert ((Get-FileHash -LiteralPath $dll).Hash -ne (Get-FileHash -LiteralPath $interimDll).Hash) 'Legacy and Interim payloads are distinct'
     [void][IO.Directory]::CreateDirectory($root)
     $env:SCO_NO_PAUSE = $null
     foreach ($scriptPath in @((Join-Path $PackagePath 'install.ps1'), (Join-Path $PackagePath 'uninstall.ps1'), $MyInvocation.MyCommand.Path)) {
@@ -187,6 +189,16 @@ try {
         $config = Join-Path $pulsar 'Interim.runtimeconfig.json'
         Set-Content -LiteralPath (Join-Path $pulsar 'Interim.exe') 'not launched by tests' -Encoding ASCII
         Set-Content -LiteralPath $config '{"runtimeOptions":{"tfm":"net10.0","frameworks":[{"name":"Microsoft.WindowsDesktop.App","version":"10.0.0"}],"configProperties":{"System.GC.Server":false,"Custom.Keep":"сохранить","Nested":{"value":23}}},"unrelated":{"keep":true}}' -Encoding UTF8
+        # Both data layouts must reject a missing Interim payload despite a valid root net48 DLL.
+        $interimPayload = Join-Path $package 'SentisClientOptimisation.Interim.dll'
+        Remove-Item -LiteralPath $interimPayload
+        $before = Snapshot $fixture
+        foreach ($validate in @($false, $true)) {
+            $failure = Run-Script 'install.ps1' 1 -Runtime Interim -ValidateOnly:$validate
+            Assert ($failure.Contains('SentisClientOptimisation.Interim.dll')) 'missing Interim reports the selected payload'
+            Assert ((Snapshot $fixture) -ceq $before) 'missing Interim preflight has no mutations and no Legacy fallback'
+        }
+        Copy-Item -LiteralPath $script:interimDll -Destination $interimPayload
         $initialHash = (Get-FileHash -LiteralPath $config).Hash
         $before = Snapshot $fixture
         Run-Script 'install.ps1' -Runtime Interim -ValidateOnly -WithoutScriptNonInteractive | Out-Null
@@ -206,7 +218,7 @@ try {
         Assert ($jsonCfg.unrelated.keep) 'Interim unrelated root preserved'
         Assert ((Get-FileHash -LiteralPath (Join-Path $pulsar 'Legacy.exe.config')).Hash -eq $legacyConfigHash) 'install touches only selected config'
         if ($ownData) { Assert ((Get-FileHash -LiteralPath (Join-Path $pulsar 'Legacy\Profiles\Current.xml')).Hash -eq $legacyProfileHash) 'separate Interim profile leaves Legacy untouched' }
-        Assert ((Get-FileHash -LiteralPath (Join-Path $dataFolder 'Local\SentisClientOptimisation.dll')).Hash -eq (Get-FileHash -LiteralPath $dll).Hash) 'Interim DLL in selected data folder'
+        Assert ((Get-FileHash -LiteralPath (Join-Path $dataFolder 'Local\SentisClientOptimisation.dll')).Hash -eq (Get-FileHash -LiteralPath $interimDll).Hash) 'Interim DLL in selected data folder (never the root net48 payload)'
         [xml]$xml = Get-Content -LiteralPath $profile -Raw
         Assert (@($xml.SelectNodes('/Profile/Local/string') | Where-Object InnerText -eq 'SentisClientOptimisation.dll').Count -eq 1) 'Interim repeat profile enable is idempotent'
         $launchText = Get-Content -LiteralPath (Join-Path $pulsar 'SentisClientOptimisation-launch.cmd') -Raw

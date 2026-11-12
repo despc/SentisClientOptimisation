@@ -4,13 +4,33 @@ Never launches Legacy.exe or the game. Exit codes: 0 success/no-op, 1 failure.
 -ArchivePath bypasses GitHub only for a trusted local/offline archive.
 #>
 [CmdletBinding()]
-param([string]$ArchivePath, [ValidateSet('Legacy', 'Interim')][string]$Runtime = 'Legacy')
+param([string]$ArchivePath, [ValidateSet('Legacy', 'Interim')][string]$Runtime = 'Legacy', [switch]$ReportProgress)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2
 $ProgressPreference = 'SilentlyContinue'
 $work = $null
 $createdFiles = New-Object 'System.Collections.Generic.List[string]'
 $createdDirs = New-Object 'System.Collections.Generic.List[string]'
+function Report-InstallProgress {
+    param(
+        [ValidateSet('metadata-pulsar', 'download-pulsar', 'verify-pulsar', 'extract-pulsar', 'copy-pulsar', 'detect-dotnet', 'metadata-dotnet', 'download-runtime', 'verify-runtime', 'extract-runtime', 'download-windowsdesktop', 'verify-windowsdesktop', 'extract-windowsdesktop', 'done')]
+        [string]$Phase,
+        [long]$Current = 0,
+        [long]$Total = 0,
+        [switch]$Force
+    )
+    # Helpers are also imported alone by security tests, with StrictMode enabled.
+    $enabled = Get-Variable -Name ReportProgress -ErrorAction SilentlyContinue
+    if (-not $enabled -or -not $enabled.Value) { return }
+    $state = Get-Variable -Name InstallProgressState -Scope Script -ErrorAction SilentlyContinue
+    $now = [Diagnostics.Stopwatch]::GetTimestamp()
+    if (-not $Force -and $state -and $state.Value.Phase -ceq $Phase -and
+        (($now - $state.Value.Tick) / [double][Diagnostics.Stopwatch]::Frequency) -lt 0.2) { return }
+    $culture = [Globalization.CultureInfo]::InvariantCulture
+    [Console]::Out.WriteLine('SCO_PROGRESS|' + $Phase + '|' + $Current.ToString($culture) + '|' + $Total.ToString($culture))
+    [Console]::Out.Flush()
+    $script:InstallProgressState = [pscustomobject]@{ Phase = $Phase; Tick = $now }
+}
 function Assert-NoReparse([string]$path) {
     $cursor = [IO.Path]::GetFullPath($path)
     while ($cursor) {
@@ -69,6 +89,9 @@ function Assert-AssetIntegrity($asset, [string]$path) {
     }
 }
 function Receive-HttpsFile([string]$url, [string]$path, [long]$limit, [switch]$Api) {
+    $phase = 'download-pulsar'
+    if ($Api) { $phase = 'metadata-pulsar' }
+    Report-InstallProgress $phase 0 0 -Force
     $uri = [Uri]$url
     for ($redirect = 0; $redirect -le 5; $redirect++) {
         if ($uri.Scheme -cne 'https' -or $uri.Port -ne 443 -or $uri.UserInfo -or
@@ -92,6 +115,9 @@ function Receive-HttpsFile([string]$url, [string]$path, [long]$limit, [switch]$A
             }
             if ($status -ne 200) { throw "Unexpected HTTP status: $status" }
             if ($response.ContentLength -gt $limit) { throw 'Download exceeds size limit.' }
+            $downloadTotal = [long]0
+            if ($response.ContentLength -ge 0) { $downloadTotal = $response.ContentLength }
+            Report-InstallProgress $phase 0 $downloadTotal -Force
             $input = $response.GetResponseStream()
             try {
                 $output = [IO.File]::Open($path, [IO.FileMode]::CreateNew)
@@ -103,8 +129,10 @@ function Receive-HttpsFile([string]$url, [string]$path, [long]$limit, [switch]$A
                         $received += $read
                         if ($received -gt $limit -or $clock.Elapsed.TotalSeconds -gt 180) { throw 'Download exceeds size/time limit.' }
                         $output.Write($buffer, 0, $read)
+                        Report-InstallProgress $phase $received $downloadTotal
                     }
                     if ($response.ContentLength -ge 0 -and $received -ne $response.ContentLength) { throw 'Truncated HTTP download.' }
+                    Report-InstallProgress $phase $received $downloadTotal -Force
                 } finally { $output.Dispose() }
             } finally { $input.Dispose() }
             return
@@ -131,13 +159,14 @@ try {
     Assert-NoReparse $target
     $selectedExe = $Runtime + '.exe'
     Assert-NoReparse (Join-Path $target $selectedExe)
-    if ([IO.File]::Exists((Join-Path $target $selectedExe))) { exit 0 }
+    if ([IO.File]::Exists((Join-Path $target $selectedExe))) { Report-InstallProgress 'done' 0 0 -Force; exit 0 }
     $tempRoot = [IO.Path]::GetTempPath()
     Assert-NoReparse $tempRoot
     $work = Join-Path $tempRoot ('pulsar-bootstrap-' + [guid]::NewGuid().ToString('N'))
     [void][IO.Directory]::CreateDirectory($work)
     $stage = Join-Path $work 'staging'
     [void][IO.Directory]::CreateDirectory($stage)
+    $asset = $null
     if (-not $ArchivePath) {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         $metadataPath = Join-Path $work 'release.json'
@@ -146,18 +175,24 @@ try {
         $asset = Select-PulsarAsset $release
         $ArchivePath = Join-Path $work 'Pulsar-win-x64.zip'
         Receive-HttpsFile $asset.browser_download_url $ArchivePath 134217728
-        Assert-AssetIntegrity $asset $ArchivePath
-        Write-Output ('Downloaded release asset: ' + $asset.name)
     }
+    Report-InstallProgress 'verify-pulsar' 0 0 -Force
     $ArchivePath = [IO.Path]::GetFullPath($ArchivePath)
     Assert-NoReparse $ArchivePath
     if (-not [IO.File]::Exists($ArchivePath)) { throw 'Archive does not exist.' }
     if ((Get-Item -LiteralPath $ArchivePath).Length -gt 134217728) { throw 'Archive exceeds 128 MiB.' }
+    if ($asset) {
+        Assert-AssetIntegrity $asset $ArchivePath
+        Write-Output ('Downloaded release asset: ' + $asset.name)
+    }
     Add-Type -AssemblyName System.IO.Compression
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $zip = [IO.Compression.ZipFile]::OpenRead($ArchivePath)
     try {
         if ($zip.Entries.Count -gt 10000) { throw 'Too many archive entries.' }
+        $extracted = [long]0
+        $entryCount = [long]$zip.Entries.Count
+        Report-InstallProgress 'extract-pulsar' 0 $entryCount -Force
         $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
         $total = [long]0
         foreach ($entry in $zip.Entries) {
@@ -175,7 +210,12 @@ try {
             if ($entry.Length -gt 134217728 -or $total -gt 536870912) { throw 'Expanded archive exceeds limits.' }
             $destination = [IO.Path]::GetFullPath((Join-Path $stage ($parts -join '\')))
             if (-not $destination.StartsWith($stage + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Archive path escaped staging.' }
-            if ($name.EndsWith('/')) { [void][IO.Directory]::CreateDirectory($destination); continue }
+            if ($name.EndsWith('/')) {
+                [void][IO.Directory]::CreateDirectory($destination)
+                $extracted++
+                Report-InstallProgress 'extract-pulsar' $extracted $entryCount
+                continue
+            }
             [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($destination))
             $source = $entry.Open()
             try {
@@ -191,7 +231,10 @@ try {
                     if ($written -ne $entry.Length) { throw 'Truncated archive entry.' }
                 } finally { $output.Dispose() }
             } finally { $source.Dispose() }
+            $extracted++
+            Report-InstallProgress 'extract-pulsar' $extracted $entryCount
         }
+        Report-InstallProgress 'extract-pulsar' $extracted $entryCount -Force
     } finally { $zip.Dispose() }
     $required = @('Legacy.exe', 'Legacy.exe.config', 'Interim.exe', 'Interim.dll', 'Interim.runtimeconfig.json', 'Libraries/Interim/0Harmony.dll', 'Libraries\Compiler\Compiler.exe', 'Libraries\Compiler\Compiler.exe.config', 'Libraries\Interface\Interface.exe', 'Libraries\Interface\Interface.exe.config')
     # Actual non-framework dependencies shipped in the win-x64 Legacy distribution.
@@ -216,12 +259,20 @@ try {
         Assert-NoReparse $destination
         if ([IO.Directory]::Exists($destination)) { throw "Directory blocks payload: $destination" }
     }
+    $copied = [long]0
+    $fileCount = [long]$files.Count
+    Report-InstallProgress 'copy-pulsar' 0 $fileCount -Force
     foreach ($file in $files) {
         $relative = $file.FullName.Substring($stage.Length + 1)
         if ($relative -ieq $selectedExe) { continue }
         Copy-NewFile $file.FullName (Join-Path $target $relative)
+        $copied++
+        Report-InstallProgress 'copy-pulsar' $copied $fileCount
     }
     Copy-NewFile (Join-Path $stage $selectedExe) (Join-Path $target $selectedExe)
+    $copied++
+    Report-InstallProgress 'copy-pulsar' $copied $fileCount -Force
+    Report-InstallProgress 'done' 0 0 -Force
     Write-Output "Pulsar installed into $target"
 }
 catch {

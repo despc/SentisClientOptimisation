@@ -42,6 +42,41 @@ class PackagingTests(unittest.TestCase):
         text = (ROOT / 'installer/SentisClientOptimisation.iss').read_text(encoding='utf-8-sig')
         self.assertIn("ExtractTemporaryFile('shortcut.ps1')", text)
 
+    def test_dependency_progress_is_streamed_to_the_wizard(self):
+        text = (ROOT / 'installer/SentisClientOptimisation.iss').read_text(encoding='utf-8-sig')
+        self.assertIn('ExecAndLogOutput', text)
+        self.assertIn('-ReportProgress', text)
+        self.assertIn('@DependencyOutput', text)
+        self.assertIn('Progress.iss', text)
+        progress = ROOT / 'installer/Progress.iss'
+        self.assertTrue(progress.exists(), 'Wizard progress renderer is missing')
+        renderer = progress.read_text(encoding='utf-8-sig')
+        self.assertIn('SCO_PROGRESS|', renderer)
+        self.assertIn('CreateOutputProgressPage', text)
+        self.assertIn('npbstMarquee', renderer)
+        self.assertIn('EnableDependencyWindow(WizardForm.Handle, True)', renderer)
+
+    def test_dual_runtime_payloads_are_built_staged_and_extracted(self):
+        release = (ROOT / 'tools/release.ps1').read_text(encoding='utf-8-sig')
+        for framework in ('net48', 'net10.0'):
+            self.assertIn(framework, release)
+        self.assertIn('-p:TargetFramework=', release)
+        self.assertIn('-f $framework', release)
+        self.assertIn('-p:AppendTargetFrameworkToOutputPath=false', release)
+        self.assertIn('build\\$Plugin\\$framework', release)
+        self.assertIn("Copy-Item -LiteralPath $payloads['net48'] -Destination (Join-Path $stage 'SentisClientOptimisation.dll')", release)
+        self.assertIn("Copy-Item -LiteralPath $payloads['net10.0'] -Destination (Join-Path $stage 'SentisClientOptimisation.Interim.dll')", release)
+        self.assertIn('SentisClientOptimisation.Interim.dll', release)
+        installer = (ROOT / 'installer/SentisClientOptimisation.iss').read_text(encoding='utf-8-sig')
+        self.assertIn('Source: "{#PayloadDir}\\SentisClientOptimisation.Interim.dll"; DestDir: "{app}"', installer)
+        self.assertIn("ExtractTemporaryFile('SentisClientOptimisation.Interim.dll')", installer)
+        install = (ROOT / 'package/install.ps1').read_text(encoding='utf-8-sig')
+        self.assertIn("if ($Runtime -eq 'Interim') { 'SentisClientOptimisation.Interim.dll' } else { $name }", install)
+        self.assertIn('$source = Join-Path $here $payloadName', install)
+        self.assertLess(install.index('foreach ($file in @($source,'), install.index('if ($ValidateOnly)'))
+        self.assertIn('Copy-Item -LiteralPath $source $target -Force', install)
+        self.assertIn('dotnet-version: 10.0.x', (ROOT / '.github/workflows/release.yml').read_text(encoding='utf-8-sig'))
+
     def test_multisize_icon(self):
         import struct
         data = (ROOT / 'package' / 'SentisClientOptimisation.ico').read_bytes()

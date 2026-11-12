@@ -17,6 +17,7 @@ namespace SentisClientOptimisation
 
         public void Init(object gameInstance)
         {
+            Log("Loading v" + typeof(Plugin).Assembly.GetName().Version);
             _harmony = new Harmony(Id);
             Log($"GC: {(System.Runtime.GCSettings.IsServerGC ? "server" : "workstation")}, {System.Runtime.GCSettings.LatencyMode}, " +
                 $"gen0 budget {Environment.GetEnvironmentVariable("COMPlus_GCgen0MaxBudget") ?? "default"}");
@@ -32,6 +33,8 @@ namespace SentisClientOptimisation
             Patch("GroupPowerOnce", GroupPowerOnce.Patch);
             Patch("LinePowerOnce", LinePowerOnce.Patch);
             Patch("PowerReadOnce", PowerReadOnce.Patch);
+            Log("Initialization complete");
+            MyLog.Default?.Flush();
         }
 
         private void Patch(string name, Action<Harmony> patch)

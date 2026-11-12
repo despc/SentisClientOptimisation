@@ -21,7 +21,10 @@ $oldLauncher = Join-Path $Desktop 'Space Engineers (Pulsar, GC).cmd'
 
 try {
     $here = Split-Path -Parent $MyInvocation.MyCommand.Path
-    $source = Join-Path $here $name
+    # Runtime selects the assembly, not the data directory (Interim may use Legacy data).
+    # Missing Interim payload is a preflight error; never fall back to the net48 DLL.
+    $payloadName = if ($Runtime -eq 'Interim') { 'SentisClientOptimisation.Interim.dll' } else { $name }
+    $source = Join-Path $here $payloadName
     $iconSource = Join-Path $here 'SentisClientOptimisation.ico'
     $icon = Join-Path $pulsarRoot 'SentisClientOptimisation.ico'
     $profile = Join-Path $pulsar 'Profiles\Current.xml'

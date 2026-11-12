@@ -17,12 +17,18 @@ ROOT = Path(__file__).resolve().parents[1]
 KEY = r'Software\Microsoft\Windows\CurrentVersion\Uninstall\{58234B10-6052-47CC-A295-6B04B8389684}_is1'
 parser = argparse.ArgumentParser()
 parser.add_argument('--installer', type=Path, default=ROOT / 'dist/SentisClientOptimisation-0.2.1-Setup.exe')
+parser.add_argument('--app-id', default='58234B10-6052-47CC-A295-6B04B8389684', help='Must match AppGuid used when compiling the tested EXE')
 parser.add_argument('--archive', type=Path, required=True, help='Official Pulsar Windows archive for the existing-Pulsar test')
 parser.add_argument('--download', action='store_true', help='Also exercise consented real network installation')
 parser.add_argument('--runtime', choices=['Legacy', 'Interim'], default='Legacy')
 parser.add_argument('--auto-detect', action='store_true', help='Keep only selected executable and test automatic detection')
 parser.add_argument('--gui-consent', action='store_true', help='Exercise the real Yes/No prompt using Win32 buttons')
+parser.add_argument('--check-progress', action='store_true', help='Observe real download labels and wizard responsiveness (requires --download --gui-consent)')
 args = parser.parse_args()
+uuid.UUID(args.app_id)
+KEY = KEY.replace('58234B10-6052-47CC-A295-6B04B8389684', args.app_id)
+if args.check_progress and not (args.download and args.gui_consent):
+    parser.error('--check-progress requires --download --gui-consent')
 assert args.installer.is_file(), 'Build the installer first'
 try:
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, KEY):
@@ -59,7 +65,7 @@ def setup(expected=0, consent=False):
         command.append('/INSTALLPULSAR=1')
     elif args.auto_detect:
         command.remove('/RUNTIME=' + args.runtime)
-    if args.gui_consent and not (pulsar / (args.runtime + '.exe')).exists():
+    if args.gui_consent and (consent or not args.check_progress) and not (pulsar / (args.runtime + '.exe')).exists():
         import ctypes
         from ctypes import wintypes
         import time
@@ -82,6 +88,9 @@ def setup(expected=0, consent=False):
         import psutil
         user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
         clicked = False
+        progress_samples = []
+        user32.SendMessageTimeoutW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM, wintypes.UINT, wintypes.UINT, ctypes.POINTER(ctypes.c_size_t)]
+        user32.SendMessageTimeoutW.restype = wintypes.LPARAM
         while time.monotonic() < deadline and process.poll() is None:
             windows = []
             family = {process.pid}
@@ -99,15 +108,24 @@ def setup(expected=0, consent=False):
                     return True
                 main_windows.append(hwnd)
                 children = []
+                visible_text = []
                 @callback_type
                 def child(ch, data):
                     children.append(text(ch))
+                    if user32.IsWindowVisible(ch):
+                        visible_text.append(text(ch))
                     if user32.IsWindowVisible(ch) and user32.IsWindowEnabled(ch):
                         label = text(ch).replace('&', '').strip()
                         if label in ('Далее', 'Далее >', 'Next', 'Next >', 'Установить', 'Install', 'Завершить', 'Finish'):
                             buttons.append(ch)
                     return True
                 user32.EnumChildWindows(hwnd, child, 0)
+                if args.check_progress and 'Загрузка Pulsar' in visible_text:
+                    for label in visible_text:
+                        if 'МБ' in label:
+                            result = ctypes.c_size_t()
+                            responsive = bool(user32.SendMessageTimeoutW(hwnd, 0, 0, 0, 0x0002, 500, ctypes.byref(result)))
+                            progress_samples.append({'detail': label, 'enabled': bool(user32.IsWindowEnabled(hwnd)), 'responsive': responsive})
                 if any('Pulsar ' in value and 'не найден.' in value for value in children):
                     windows.append((hwnd, children))
                 return True
@@ -130,6 +148,15 @@ def setup(expected=0, consent=False):
             process.terminate()
             raise AssertionError('Real Pulsar consent dialog was not observed')
         code = process.wait(timeout=240)
+        if args.check_progress and consent and code == 0:
+            (scratch / 'progress-ui.json').write_text(json.dumps(progress_samples, ensure_ascii=False, indent=2), encoding='utf-8')
+            details = {sample['detail'] for sample in progress_samples}
+            assert len(details) >= 2, f'Download UI did not show changing byte counts: {progress_samples}'
+            assert all(sample['enabled'] and sample['responsive'] for sample in progress_samples), progress_samples
+            import re
+            percentages = {int(match.group(1)) for detail in details if (match := re.search(r'\((\d+)%\)', detail))}
+            assert len(percentages) >= 2 and any(0 < value < 100 for value in percentages), details
+            print('PASS live download UI: changing MB/percent, enabled responsive wizard;', len(details), 'distinct samples', flush=True)
         assert (code == 0) == (expected == 0), f'setup exit {code}; logs: {scratch}'
         return code
     result = subprocess.run(command, env=env, timeout=240)
@@ -156,7 +183,9 @@ def uninstall():
         pass
 
 def verify():
-    assert digest(dll) == digest(app / 'SentisClientOptimisation.dll')
+    payload = 'SentisClientOptimisation.Interim.dll' if args.runtime == 'Interim' else 'SentisClientOptimisation.dll'
+    assert digest(dll) == digest(app / payload), f'{args.runtime} installed the wrong runtime payload'
+    assert digest(app / 'SentisClientOptimisation.dll') != digest(app / 'SentisClientOptimisation.Interim.dll'), 'Runtime payloads must differ'
     assert digest(icon) == digest(ROOT / 'package/SentisClientOptimisation.ico')
     xml = ET.parse(profile)
     assert [n.text for n in xml.findall('./Local/string')].count('SentisClientOptimisation.dll') == 1
