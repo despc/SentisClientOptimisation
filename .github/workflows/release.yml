@@ -1,5 +1,5 @@
 # A tag 0.2.1 (or v0.2.1) pushed to the repository builds the plugin and publishes a release with
-# SentisClientOptimisation-0.2.1.zip: unpacked, it installs itself (install.cmd inside).
+# SentisClientOptimisation-0.2.1-Setup.exe: automatic installation with a desktop shortcut.
 #
 # The plugin is built against the libraries of Space Engineers, which are not in the repository (they are not ours
 # to hand out): the job downloads the dedicated server with SteamCMD (it is free to download without an account),
@@ -7,7 +7,7 @@
 # the game it loads into has them, and Harmony it patches the game with comes from Pulsar (from NuGet where Pulsar
 # is not installed, as here).
 #
-# "Run workflow" on the Actions page builds the same zip without a release (it is left as the run's artifact).
+# "Run workflow" on the Actions page builds the same installer without a release (it is left as the run's artifact).
 name: Release
 
 on:
@@ -71,16 +71,37 @@ jobs:
           Copy-Item "$tmp\ds\DedicatedServer64\*.dll" "$env:SE_ROOT\DedicatedServer64"
           $global:LASTEXITCODE = 0
 
+      - name: Inno Setup 6.5.4
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $setup = Join-Path $env:RUNNER_TEMP 'innosetup.exe'
+          $compiler = Join-Path $env:RUNNER_TEMP 'InnoSetup'
+          Invoke-WebRequest 'https://github.com/jrsoftware/issrc/releases/download/is-6_5_4/innosetup-6.5.4.exe' -OutFile $setup
+          $signature = Get-AuthenticodeSignature $setup
+          if ($signature.Status -ne 'Valid') { throw 'Inno Setup signature is not valid' }
+          $process = Start-Process $setup -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CURRENTUSER', ('/DIR="' + $compiler + '"')) -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Inno Setup install failed: $($process.ExitCode)" }
+          "INNO_COMPILER=$compiler\ISCC.exe" >> $env:GITHUB_ENV
+
       - name: Build and pack
         id: pack
         shell: pwsh
         run: ./tools/release.ps1 -Version "${{ github.event_name == 'push' && github.ref_name || inputs.version }}" -SeBin "$env:SE_ROOT\DedicatedServer64" -Plugin "$env:PLUGIN"
 
-      - name: The zip as the run's artifact
+      - name: Verify staged installation scripts
+        shell: powershell
+        run: |
+          python tools/test-packaging.py
+          if ($LASTEXITCODE -ne 0) { throw 'Packaging checks failed' }
+          ./tools/test-install.ps1 -PackagePath "$env:GITHUB_WORKSPACE/dist/$env:PLUGIN"
+          if ($LASTEXITCODE -ne 0) { throw 'Installation lifecycle checks failed' }
+
+      - name: The EXE installer as the run's artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.PLUGIN }}
-          path: ${{ steps.pack.outputs.zip }}
+          path: ${{ steps.pack.outputs.installer }}
           if-no-files-found: error
 
       - name: Publish the release
@@ -90,8 +111,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = '${{ github.ref_name }}'
-          $zip = '${{ steps.pack.outputs.zip }}'
+          $installer = '${{ steps.pack.outputs.installer }}'
           gh release view $tag *> $null
-          if ($LASTEXITCODE -eq 0) { gh release upload $tag $zip --clobber }
-          else { gh release create $tag $zip --title "$env:PLUGIN $tag" --generate-notes --verify-tag }
+          if ($LASTEXITCODE -eq 0) { gh release upload $tag $installer --clobber }
+          else { gh release create $tag $installer --title "$env:PLUGIN $tag" --generate-notes --verify-tag }
           if ($LASTEXITCODE -ne 0) { throw "The release was not published ($LASTEXITCODE)" }

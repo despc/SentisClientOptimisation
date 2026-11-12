@@ -28,20 +28,43 @@ Space Engineers, найденные по трейсам клиентов. Раб
 
 ## Установка
 
-`powershell -NoProfile -ExecutionPolicy Bypass -File tools\install.ps1` — собирает и кладёт
-`SentisClientOptimisation.dll` в `%APPDATA%\Pulsar\Legacy\Local` и включает его в текущем профиле Pulsar
-(`Profiles\Current.xml`, раздел `Local`): игра грузит его при следующем запуске. В логе игры (`%APPDATA%\SpaceEngineers\SpaceEngineers_*.log`)
-при старте: `SentisClientOptimisation: VoxelCacheSave on`, `SentisClientOptimisation: BulkChildDelete on`.
+Закройте игру и запустите `SentisClientOptimisation-<версия>-Setup.exe`.
+Установщик обнаруживает Legacy и Interim в `%APPDATA%\Pulsar` и предлагает выбрать режим.
+Legacy запускает SE1 на .NET Framework 4.8, Interim — на .NET 10 через слой совместимости;
+Modern относится к SE2. Если выбранный вариант отсутствует, установщик предлагает скачать Pulsar
+с официального GitHub. Для Interim при необходимости устанавливается .NET 10 Desktop Runtime
+в `%LOCALAPPDATA%\SentisClientOptimisation\dotnet` без прав администратора.
+Предварительный запуск игры не требуется.
+Установщик кладёт DLL в каталог Local выбранного режима (у Interim возможен штатный fallback на Legacy),
+включает плагин в текущем профиле,
+настраивает серверный GC и создаёт ярлык «Space Engineers (Pulsar)» с иконкой Sentis.
+Запускайте игру этим ярлыком. Права администратора не нужны.
+
+Удаление — через «Установленные приложения» Windows: убирает плагин, запись профиля, ярлык и настройки GC
+(при изменённом конфиге сохраняет посторонние настройки). Сам Pulsar и остальные плагины остаются.
+В логе игры при старте: `SentisClientOptimisation: VoxelCacheSave on` и `SentisClientOptimisation: GC: server, ...`.
+Обновление Pulsar может перезаписать его конфиг; в этом случае повторите установку.
 
 Сборка ссылается на клиент игры (`SeBin`, по умолчанию `C:\Program Files (x86)\Steam\steamapps\common\SpaceEngineers\Bin64`)
 и на Harmony из Pulsar (`PulsarLib`, по умолчанию `%APPDATA%\Pulsar\Libraries\Legacy`; где Pulsar нет — на тот же
 `Lib.Harmony` из NuGet, в рантайме плагин связывается с Harmony, который Pulsar уже загрузил).
 
-`tools\release.ps1 -Version 0.2.1` собирает и-packует архив (`dist\SentisClientOptimisation-0.2.1.zip`: dll, скрипты
-установки, README с версией). Тег `0.2.1` (или `v0.2.1`), поставленный и отправленный на GitHub, запускает workflow,
-который повторяет это против библиотек игры, скачанных SteamCMD (бесплатный выделенный сервер, кэш на неделю — в
-репозитории их нет, и не наш право их раздавать), и кладёт архив в релиз; «Run workflow» собирает тот же архив без
-релиза.
+`powershell -NoProfile -ExecutionPolicy Bypass -File tools/release.ps1 -Version 0.2.1`
+собирает `dist\SentisClientOptimisation-0.2.1-Setup.exe`. Нужны .NET SDK и Inno Setup 6.5+;
+путь к компилятору можно передать через `-Iscc` или `INNO_COMPILER`.
+Тег `0.2.1` (или `v0.2.1`) запускает workflow сборки и публикации EXE;
+«Run workflow» собирает EXE без релиза. Библиотеки игры workflow получает через SteamCMD и не включает в установщик.
+
+Проверки упаковки: `python tools\test-packaging.py`;
+проверки установки и удаления в изолированном профиле:
+`powershell -NoProfile -ExecutionPolicy Bypass -File tools\test-install.ps1`.
+`tools\test-pulsar-install.ps1` проверяет отдельную установку Pulsar.
+Для тихой установки с явным согласием на скачивание Pulsar:
+`/VERYSILENT /RUNTIME=Legacy /INSTALLPULSAR=1` (или `/RUNTIME=Interim`);
+без `INSTALLPULSAR=1` тихая установка не скачивает отсутствующий Pulsar.
+Полная проверка EXE — `tools/test-exe.py --archive <официальный win-x64.zip> --runtime Legacy --download --gui-consent`;
+повторить с `--runtime Interim`. Тест использует изолированные APPDATA, LOCALAPPDATA и Desktop,
+проверяет реальные кнопки согласия, профиль, GC, иконку и удаление; игру не запускает.
 
 ## Сборка мусора клиента (отдельно от плагина)
 
