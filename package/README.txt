@@ -24,6 +24,15 @@
 
 Права администратора не нужны. Игра и Pulsar должны быть закрыты во время установки и удаления.
 
+Если Interim.runtimeconfig.json отсутствует, EXE и install.ps1 восстанавливают его без сети:
+сначала из проверенной .bak-before-gc, иначе из официального шаблона Pulsar v2.4.3.
+Существующий конфиг не заменяется шаблоном; некорректный конфиг или backup требует ручной проверки.
+Восстановленный конфиг сохраняется при откате установки и удалении плагина. -ValidateOnly ничего не восстанавливает.
+
+В релизах отдельно доступны DLL: SentisClientOptimisation.dll (Legacy) и
+SentisClientOptimisation.Interim.dll (Interim/CoreCLR). При ручной замене для Interim
+переименуйте выбранную DLL в SentisClientOptimisation.dll в Local. Не кладите обе сборки в один Local.
+
 Проверка: в логе игры (%APPDATA%\SpaceEngineers\SpaceEngineers_*.log) есть строки "SentisClientOptimisation: ... on"
 и "SentisClientOptimisation: GC: server, ..., gen0 budget 2000000". Если там "workstation" - Pulsar при обновлении
 перезаписал свой конфиг: повторите установку EXE.

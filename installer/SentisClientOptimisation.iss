@@ -51,6 +51,8 @@ Source: "{#PayloadDir}\uninstall.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PayloadDir}\install-pulsar.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PayloadDir}\install-dotnet.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PayloadDir}\install-transaction.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#PayloadDir}\repair-interim-runtimeconfig.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#PayloadDir}\Interim.runtimeconfig.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#PayloadDir}\README.txt"; DestDir: "{app}"; Flags: ignoreversion
 
 [UninstallDelete]
@@ -237,6 +239,8 @@ begin
   ExtractTemporaryFile('install-pulsar.ps1');
   ExtractTemporaryFile('install-dotnet.ps1');
   ExtractTemporaryFile('install-transaction.ps1');
+  ExtractTemporaryFile('repair-interim-runtimeconfig.ps1');
+  ExtractTemporaryFile('Interim.runtimeconfig.json');
   ExtractTemporaryFile('SentisClientOptimisation.dll');
   ExtractTemporaryFile('SentisClientOptimisation.Interim.dll');
   ExtractTemporaryFile('SentisClientOptimisation.ico');
@@ -270,6 +274,14 @@ begin
   if TransactionStarted then begin
     if not RunTransaction('Rollback', Failure) then begin Result := Failure; Exit; end;
     TransactionStarted := False;
+  end;
+  // Repair is a dependency prerequisite, not a plugin-owned transaction write.
+  // Snapshot the repaired file so any later rollback restores it, never removes it.
+  if SelectedRuntime() = 'Interim' then begin
+    if not RunScript(ExpandConstant('{tmp}\repair-interim-runtimeconfig.ps1'), False, Failure) then begin
+      Result := Failure;
+      Exit;
+    end;
   end;
   if not RunTransaction('Begin', Failure) then begin Result := Failure; Exit; end;
   TransactionStarted := True;

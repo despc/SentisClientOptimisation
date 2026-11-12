@@ -3,6 +3,10 @@ param([string]$PackagePath = (Join-Path (Split-Path $PSScriptRoot -Parent) 'dist
 $ErrorActionPreference = 'Stop'
 $root = Join-Path $env:LOCALAPPDATA ('hermes\cache\scratch\sco-install-[тест-日本語]-' + [Guid]::NewGuid().ToString('N'))
 $originalAppData = $env:APPDATA
+$originalLocalAppData = $env:LOCALAPPDATA
+$originalTemp = $env:TEMP
+$originalTmp = $env:TMP
+$tempRoot = Join-Path (Split-Path $root -Parent) ('sco-install-temp-' + [Guid]::NewGuid().ToString('N'))
 $originalPause = $env:SCO_NO_PAUSE
 $script:checks = 0
 function Assert($condition, [string]$message) {
@@ -31,12 +35,19 @@ function New-Fixture([string]$id, [bool]$withLocal = $true) {
     $script:fixture = Join-Path $root $id
     $script:package = Join-Path $fixture 'package'
     $env:APPDATA = Join-Path $fixture 'AppData'
+    $env:LOCALAPPDATA = Join-Path $fixture 'LocalAppData'
+    # .NET Framework csc cannot emit Add-Type output under a Unicode TEMP path.
+    # Keep TEMP isolated in scratch, but exercise Unicode in the actual targets.
+    $env:TEMP = Join-Path $tempRoot $id
+    $env:TMP = $env:TEMP
+    foreach ($directory in @($env:LOCALAPPDATA, $env:TEMP)) { [void][IO.Directory]::CreateDirectory($directory) }
     $script:desktop = Join-Path $fixture 'Desktop'
     $script:pulsar = Join-Path $env:APPDATA 'Pulsar'
     $script:profile = Join-Path $pulsar 'Legacy\Profiles\Current.xml'
     $script:config = Join-Path $pulsar 'Legacy.exe.config'
     foreach ($directory in @($package, $desktop, (Split-Path $profile -Parent))) { [void][IO.Directory]::CreateDirectory($directory) }
     foreach ($scriptFile in @(Get-ChildItem -LiteralPath $PackagePath -Filter '*.ps1')) { Copy-Item -LiteralPath $scriptFile.FullName -Destination $package }
+    Copy-Item -LiteralPath (Join-Path $PackagePath 'Interim.runtimeconfig.json') -Destination $package
     Copy-Item -LiteralPath $script:dll (Join-Path $package 'SentisClientOptimisation.dll')
     Copy-Item -LiteralPath $script:interimDll (Join-Path $package 'SentisClientOptimisation.Interim.dll')
     if (Test-Path -LiteralPath (Join-Path $PackagePath 'SentisClientOptimisation.ico')) { Copy-Item -LiteralPath (Join-Path $PackagePath 'SentisClientOptimisation.ico') $package }
@@ -322,9 +333,35 @@ try {
             Assert (-not (Test-Path -LiteralPath ($config + '.sentis-gc.sha256'))) 'installed hash consumed'
         }
     }
+    # Missing Interim config is a dependency repair, never a GC-owned deletion.
+    foreach ($recovery in @('template', 'backup')) {
+        New-Fixture ('interim-repair-' + $recovery)
+        Set-Content -LiteralPath (Join-Path $pulsar 'Interim.exe') 'never launched' -Encoding ASCII
+        $config = Join-Path $pulsar 'Interim.runtimeconfig.json'
+        $baseline = Join-Path $package 'Interim.runtimeconfig.json'
+        if ($recovery -eq 'backup') {
+            $baseline = $config + '.bak-before-gc'
+            $json = Get-Content -LiteralPath (Join-Path $package 'Interim.runtimeconfig.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            $json | Add-Member -NotePropertyName CustomRecovery -NotePropertyValue 'keep'
+            $json | ConvertTo-Json -Depth 100 -Compress | Set-Content -LiteralPath $baseline -Encoding UTF8
+        }
+        $baselineHash = (Get-FileHash -LiteralPath $baseline).Hash
+        $before = Snapshot $fixture
+        Run-Script 'install.ps1' 1 -Runtime Interim -ValidateOnly | Out-Null
+        Assert ((Snapshot $fixture) -ceq $before) 'missing Interim ValidateOnly never repairs'
+        Run-Script 'install.ps1' -Runtime Interim | Out-Null
+        Assert ((Get-FileHash -LiteralPath ($config + '.bak-before-gc')).Hash -eq $baselineHash) 'recovery keeps selected source bytes as GC baseline'
+        Run-Script 'install.ps1' -Runtime Interim | Out-Null
+        Run-Script 'uninstall.ps1' -Runtime Interim | Out-Null
+        Assert ((Get-FileHash -LiteralPath $config).Hash -eq $baselineHash) 'repaired Interim survives repeat install and uninstall byte-exactly'
+    }
     Write-Host "PASS: $script:checks assertions. Isolated fixture: $root"
 } finally {
     $env:APPDATA = $originalAppData
+    $env:LOCALAPPDATA = $originalLocalAppData
+    $env:TEMP = $originalTemp
+    $env:TMP = $originalTmp
     $env:SCO_NO_PAUSE = $originalPause
     if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
+    if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
 }

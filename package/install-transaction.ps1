@@ -103,8 +103,11 @@ try {
                     if (-not [IO.File]::Exists($source)) { throw 'A transaction backup is missing.' }
                 }
             }
+            # Snapshot-backed files are restored in place. Do not unlink a live
+            # runtimeconfig even briefly (or require FILE_SHARE_DELETE on it).
+            $backedPaths = @($manifest.Files | Where-Object { $null -ne $_.Backup } | ForEach-Object { $_.Path })
             foreach ($path in @(OwnedFiles $manifest.Pulsar $manifest.Desktop)) {
-                if ([IO.File]::Exists($path)) { [IO.File]::Delete($path) }
+                if ($backedPaths -notcontains $path -and [IO.File]::Exists($path)) { [IO.File]::Delete($path) }
             }
             foreach ($file in $manifest.Files) {
                 if ($null -ne $file.Backup) {

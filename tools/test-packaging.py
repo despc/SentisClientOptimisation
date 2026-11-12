@@ -77,6 +77,19 @@ class PackagingTests(unittest.TestCase):
         self.assertIn('Copy-Item -LiteralPath $source $target -Force', install)
         self.assertIn('dotnet-version: 10.0.x', (ROOT / '.github/workflows/release.yml').read_text(encoding='utf-8-sig'))
 
+    def test_offline_repair_is_shipped_and_precedes_transaction(self):
+        installer = (ROOT / 'installer/SentisClientOptimisation.iss').read_text(encoding='utf-8-sig')
+        release = (ROOT / 'tools/release.ps1').read_text(encoding='utf-8-sig')
+        for name in ('repair-interim-runtimeconfig.ps1', 'Interim.runtimeconfig.json'):
+            self.assertIn(name, release)
+            self.assertIn('Source: "{#PayloadDir}\\' + name + '"', installer)
+            self.assertIn("ExtractTemporaryFile('" + name + "')", installer)
+        prepare = installer[installer.index('function PrepareToInstall'):]
+        self.assertLess(prepare.index("RunScript(ExpandConstant('{tmp}\\repair-interim-runtimeconfig.ps1')"), prepare.index("RunTransaction('Begin'"))
+        install = (ROOT / 'package/install.ps1').read_text(encoding='utf-8-sig')
+        self.assertIn("'repair-interim-runtimeconfig.ps1'", install)
+        self.assertIn("$Runtime -eq 'Interim' -and -not $ValidateOnly", install)
+
     def test_multisize_icon(self):
         import struct
         data = (ROOT / 'package' / 'SentisClientOptimisation.ico').read_bytes()

@@ -22,6 +22,10 @@ $oldLauncher = Join-Path $Desktop 'Space Engineers (Pulsar, GC).cmd'
 function Restore-GcConfiguration([string]$path, [string]$backup) {
     $hashPath = $path + '.sentis-gc.sha256'
     $mergePath = $path + '.sentis-gc.merge'
+    # A recovered backup may already be the exact current config with no GC
+    # metadata yet. Do not reserialize a configuration that needs no undo.
+    if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -eq
+        (Get-FileHash -LiteralPath $backup -Algorithm SHA256).Hash) { return }
     if ((Test-Path -LiteralPath $hashPath) -and -not (Test-Path -LiteralPath $mergePath) -and
         (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -eq (Get-Content -LiteralPath $hashPath -Raw).Trim()) {
         Copy-Item -LiteralPath $backup -Destination $path -Force

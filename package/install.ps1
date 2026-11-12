@@ -35,6 +35,11 @@ try {
         if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "В установочном пакете отсутствует файл: $file" }
     }
     if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw "Не найден Pulsar ($exe). Установите Pulsar и запустите игру через него для создания профиля." }
+    # Dependency repair is create-only; ValidateOnly must never repair or write.
+    if ($Runtime -eq 'Interim' -and -not $ValidateOnly) {
+        & "$PSHOME\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $here 'repair-interim-runtimeconfig.ps1')
+        if ($LASTEXITCODE -ne 0) { throw 'Interim runtime configuration repair failed.' }
+    }
     if (-not (Test-Path -LiteralPath $config -PathType Leaf)) { throw "Не найден конфиг Pulsar: $config" }
     if ($Runtime -eq 'Legacy') {
         [xml]$cfg = Get-Content -LiteralPath $config -Raw -Encoding UTF8
@@ -84,8 +89,9 @@ try {
     $mergePath = $config + '.sentis-gc.merge'
     if (Test-Path -LiteralPath $backup) {
         # A repeat install must not make an already stale backup authoritative again.
-        if (-not (Test-Path -LiteralPath $hashPath) -or
-            (Get-FileHash -LiteralPath $config -Algorithm SHA256).Hash -ne (Get-Content -LiteralPath $hashPath -Raw).Trim()) {
+        if ((Get-FileHash -LiteralPath $config -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $backup -Algorithm SHA256).Hash -and
+            (-not (Test-Path -LiteralPath $hashPath) -or
+            (Get-FileHash -LiteralPath $config -Algorithm SHA256).Hash -ne (Get-Content -LiteralPath $hashPath -Raw).Trim())) {
             Set-Content -LiteralPath $mergePath -Value 'Preserve unrelated current configuration' -Encoding ASCII
         }
     } else { Copy-Item -LiteralPath $config -Destination $backup }

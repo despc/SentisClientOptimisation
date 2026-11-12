@@ -245,6 +245,38 @@ try:
     assert digest(config) == original
     assert ET.parse(profile).find('./Local/string').text == 'Other.dll'
     print('PASS EXE install/reinstall/uninstall with existing Pulsar', flush=True)
+    if args.runtime == 'Interim':
+        original_bytes = config.read_bytes()
+        for source in ('template', 'backup'):
+            backup = Path(str(config) + '.bak-before-gc')
+            if source == 'backup':
+                backup.write_bytes(original_bytes)
+                recovered = original_bytes
+            else:
+                recovered = (ROOT / 'package/Interim.runtimeconfig.json').read_bytes()
+            config.unlink()
+            # Repair must happen before Begin: post-mutation failure must not
+            # roll the recovered dependency back to its original missing state.
+            link.mkdir()
+            # A GC backup triggers CleanPrevious, whose uninstall removes an
+            # empty directory blocker. Nonempty blocker also survives that path.
+            blocker = link / 'keep-test-blocker.txt'
+            blocker.write_text('preexisting user content', encoding='utf-8')
+            setup(expected=1)
+            assert config.read_bytes() == recovered, 'Rollback deleted or changed repaired config'
+            assert blocker.read_text(encoding='utf-8') == 'preexisting user content'
+            assert not dll.exists() and not icon.exists()
+            blocker.unlink()
+            link.rmdir()
+            setup()
+            verify()
+            setup()
+            verify()
+            uninstall()
+            assert config.read_bytes() == recovered, 'Uninstall deleted or changed repaired config'
+            assert not backup.exists()
+            print('PASS missing Interim config: offline ' + source + ' recovery, failure rollback, reinstall, uninstall', flush=True)
+        config.write_bytes(original_bytes)
 finally:
     if (app / 'unins000.exe').exists():
         uninstall()
