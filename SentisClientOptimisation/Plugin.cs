@@ -19,6 +19,8 @@ namespace SentisClientOptimisation
         {
             Log("Loading v" + typeof(Plugin).Assembly.GetName().Version);
             _harmony = new Harmony(Id);
+            OptimisationPreferences.Load();
+
             Log($"GC: {(System.Runtime.GCSettings.IsServerGC ? "server" : "workstation")}, {System.Runtime.GCSettings.LatencyMode}, " +
                 $"gen0 budget {Environment.GetEnvironmentVariable("COMPlus_GCgen0MaxBudget") ?? "default"}");
             Patch("VoxelCacheSave", VoxelCacheSave.Patch);
@@ -33,6 +35,9 @@ namespace SentisClientOptimisation
             Patch("GroupPowerOnce", GroupPowerOnce.Patch);
             Patch("LinePowerOnce", LinePowerOnce.Patch);
             Patch("PowerReadOnce", PowerReadOnce.Patch);
+            Patch("OptimisationMenu", OptimisationMenu.Patch);
+            Patch("OptimisationRuntime", OptimisationRuntime.Initialize);
+
             Log("Initialization complete");
             MyLog.Default?.Flush();
         }
@@ -50,13 +55,26 @@ namespace SentisClientOptimisation
             }
         }
 
-        public void Update() => ConveyorCloseUnsubscribe.Flush();
+        public void Update()
+        {
+            ConveyorCloseUnsubscribe.Flush();
+            OptimisationMenu.Refresh();
+            OptimisationRuntime.Update();
+
+        }
+
+
 
         public void Dispose()
         {
+            try { OptimisationRuntime.Dispose(); }
+            catch (Exception e) { Log("Optimisation cleanup: " + e); }
+
             try { _harmony?.UnpatchAll(Id); }
             catch (Exception) { }
         }
+
+        public void OpenConfigDialog() => OptimisationMenu.Open();
 
         internal static void Log(string text) => MyLog.Default?.WriteLine(Id + ": " + text);
     }
